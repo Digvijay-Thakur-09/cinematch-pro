@@ -10,7 +10,7 @@ from typing import List, Dict, Tuple, Any, Optional
 from sklearn.base import BaseEstimator, TransformerMixin
 from sklearn.preprocessing import MultiLabelBinarizer
 import pathlib
-
+from transformers import MLB_Wrapper
 
 st.set_page_config(
     page_title="CineMatch Pro | AI Movie Discovery",
@@ -302,23 +302,6 @@ def inject_custom_css() -> None:
     st.markdown(custom_css, unsafe_allow_html=True)
 
 
-class MLB_Wrapper(BaseEstimator, TransformerMixin):
-    """
-    A custom Scikit-Learn Transformer to wrap MultiLabelBinarizer.
-    This class is required to exist in the main file so `joblib` can 
-    successfully unpickle the saved pipeline architecture.
-    """
-    def __init__(self):
-        self.mlb = MultiLabelBinarizer()
-    
-    def fit(self, X: pd.DataFrame, y=None):
-        # Assumes the first column contains the list of genres
-        self.mlb.fit(X.iloc[:, 0])
-        return self
-        
-    def transform(self, X: pd.DataFrame) -> np.ndarray:
-        return self.mlb.transform(X.iloc[:, 0])
-
 
 @st.cache_resource(show_spinner="Loading Neural Network...")
 def load_model() -> Any:
@@ -502,14 +485,17 @@ class RecommendationEngine:
         
         def filter_and_sort(df: pd.DataFrame, enforce_lang: bool, enforce_year: bool) -> pd.DataFrame:
             temp = df.copy()
+            
             if enforce_lang and target_langs:
                 temp = temp[temp['lang_name'].isin(target_langs)]
+                
             if enforce_year and strict_year_flag:
-
+                # Filter out movies that are too far out of the era
                 temp = temp[temp['year_diff'] <= 10]
                 
-
-            return temp.sort_values(by=['year_diff', 'knn_distance', 'pop_diff'], ascending=[True, True, True])
+            # CRITICAL FIX: Sort primarily by KNN Distance so the AI's math is respected!
+            # Year difference and popularity difference are secondary tie-breakers.
+            return temp.sort_values(by=['knn_distance', 'year_diff', 'pop_diff'], ascending=[True, True, True])
 
         result = filter_and_sort(pool, enforce_lang=True, enforce_year=True)
 
@@ -531,16 +517,15 @@ def render_movie_card(movie: pd.Series, distance: float) -> str:
     Includes badges, hover states, and safe string escaping.
     """
 
+    
     title = str(movie['title'])
     safe_title = title.replace("'", "&#39;").replace('"', "&quot;")
     
     year = int(movie.get('release_year', 0))
     vote_avg = float(movie.get('vote_average', 0.0))
     lang_name = movie.get('lang_name', 'Unknown')
-
-    pop_raw = movie.get('popularity', 0.0)
-    percentile_rank = (df['popularity'] <= pop_raw).mean()
-    pop_display = percentile_rank * 10.0
+    
+    pop_display = float(movie.get('popularity_percentile', 5.0))
 
     match_score = calculate_match_score(distance)
     score_color = "#46D369" if match_score >= 80 else "#E8B708" if match_score >= 60 else "#E50914"
@@ -621,7 +606,6 @@ def render_architecture_docs():
 def main():
     # 1. Initialization
     inject_custom_css()
-    global df, pipeline
     df = load_data()
     pipeline = load_model()
     engine = RecommendationEngine(pipeline, df)

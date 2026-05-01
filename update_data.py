@@ -7,11 +7,14 @@ from datetime import datetime, timedelta
 from sklearn.pipeline import Pipeline
 from sklearn.compose import ColumnTransformer
 from sklearn.preprocessing import MinMaxScaler, MultiLabelBinarizer
-from sklearn.base import BaseEstimator, TransformerMixin
 from sklearn.neighbors import NearestNeighbors
+from dotenv import load_dotenv
+from transformers import MLB_Wrapper
+import os
 
+load_dotenv()
 # --- CONFIGURATION ---
-BEARER_TOKEN = "eyJhbGciOiJIUzI1NiJ9.eyJhdWQiOiI3ZmU4NjBkZTQxNGU1NjYwOWM0ODRiMjJlOTcyNTNiNiIsIm5iZiI6MTc3NzMwNzI2OS42MDMwMDAyLCJzdWIiOiI2OWVmOGU4NTFlMjk2ZmNjODk5MzcwMGUiLCJzY29wZXMiOlsiYXBpX3JlYWQiXSwidmVyc2lvbiI6MX0.VT3H1m0SZ45n2wG5mams9nu6nmGUQsOOIaQwunf1sdA"
+BEARER_TOKEN = os.getenv("TMDB_BEARER_TOKEN")   
 MASTER_DATABASE_FILE = "tmdb_file_clean.csv.gz"# Your main dataset
 
 HEADERS = {
@@ -19,14 +22,6 @@ HEADERS = {
     "Authorization": f"Bearer {BEARER_TOKEN}"
 }
 
-class MLB_Wrapper(BaseEstimator, TransformerMixin):
-    def __init__(self):
-        self.mlb = MultiLabelBinarizer()
-    def fit(self, X, y=None):
-        self.mlb.fit(X.iloc[:, 0])
-        return self
-    def transform(self, X):
-        return self.mlb.transform(X.iloc[:, 0])
 
 def fetch_page_with_retry(url, page, max_retries=5):
     for attempt in range(1, max_retries + 1):
@@ -112,6 +107,9 @@ def retrain_model(df):
         ('preprocessor', preprocessor),
         ('knn', NearestNeighbors(n_neighbors=6, metric='cosine', algorithm='brute'))
     ])
+
+    # Pre-compute percentile rank (0.0 to 10.0 scale)
+    df['popularity_percentile'] = df['popularity'].rank(pct=True) * 10.0
 
     pipeline.fit(df)
     joblib.dump(pipeline, "movie_pipeline.joblib", compress=3)
